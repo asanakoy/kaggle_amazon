@@ -1,5 +1,7 @@
 from keras import backend as K
+import numpy as np
 
+from sklearn.metrics import fbeta_score
 
 def precision(y_true, y_pred):
     """Precision metric.
@@ -69,46 +71,27 @@ def fmeasure(y_true, y_pred):
     return fbeta_score(y_true, y_pred, beta=1)
 
 
-def f2score(y_true, y_pred, average='samples'):
-    #TODO: convert to keras
+def f2score_samples(y_true, y_pred, thresh=0.2):
+    y_pred = K.round(K.clip(y_pred + thresh, 0, 1))
+    return fscore(y_true, y_pred, average='samples', beta=2)
+
+
+def fscore(y_true, y_pred, average='samples', beta=2):
     sum_axis = 1 if average == 'samples' else 0
 
-    # All labels are index integers for multilabel.
-    # Select labels:
-    if not np.all(labels == present_labels):
-        if np.max(labels) > np.max(present_labels):
-            raise ValueError('All labels must be in [0, n labels). '
-                             'Got %d > %d' %
-                             (np.max(labels), np.max(present_labels)))
-        if np.min(labels) < 0:
-            raise ValueError('All labels must be in [0, n labels). '
-                             'Got %d < 0' % np.min(labels))
-
-        y_true = y_true[:, labels[:n_labels]]
-        y_pred = y_pred[:, labels[:n_labels]]
-
     # calculate weighted counts
-    true_and_pred = y_true.multiply(y_pred)
-    tp_sum = count_nonzero(true_and_pred, axis=sum_axis,
-                           sample_weight=sample_weight)
-    pred_sum = count_nonzero(y_pred, axis=sum_axis,
-                             sample_weight=sample_weight)
-    true_sum = count_nonzero(y_true, axis=sum_axis,
-                             sample_weight=sample_weight)
-
+    true_and_pred = K.round(K.clip(y_true * y_pred, 0, 1))
+    tp_sum = K.sum(true_and_pred, axis=sum_axis)
+    pred_sum = K.sum(y_pred, axis=sum_axis)
+    true_sum = K.sum(y_true, axis=sum_axis)
 
     beta2 = beta ** 2
-    with np.errstate(divide='ignore', invalid='ignore'):
-        # Divide, and on zero-division, set scores to 0 and warn:
 
-        # Oddly, we may get an "invalid" rather than a "divide" error
-        # here.
-        precision = _prf_divide(tp_sum, pred_sum,
-                                'precision', 'predicted', average, warn_for)
-        recall = _prf_divide(tp_sum, true_sum,
-                             'recall', 'true', average, warn_for)
-        # Don't need to warn for F: either P or R warned, or tp == 0 where pos
-        # and true are nonzero, in which case, F is well-defined and zero
-        f_score = ((1 + beta2) * precision * recall /
-                   (beta2 * precision + recall))
-        f_score[tp_sum == 0] = 0.0
+    precision = tp_sum / (pred_sum + K.epsilon())
+    recall = tp_sum / (true_sum + K.epsilon())
+
+    f_score = ((1 + beta2) * precision * recall /
+               (beta2 * precision + recall + K.epsilon()))
+    # f_score[tp_sum == 0] = 0.0
+    # f_score = K.switch(K.equal(f_score, 0.0), 0.0, f_score)
+    return K.mean(f_score)

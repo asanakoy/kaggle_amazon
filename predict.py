@@ -34,14 +34,16 @@ from keras.callbacks import ModelCheckpoint
 from keras.applications.vgg19 import VGG19
 from keras.applications.vgg19 import preprocess_input
 
-from data_utils import get_pathes_predict
-from data_utils import parse_args_predict
+from args_utils import get_pathes_predict
+from args_utils import parse_args_predict
 from data_utils import ROOT_DIR
 from utils import get_label_maps
 from kerasext import predict
+from kerasext import predict_tta
+from custom_metrics import f2score_samples
 
 
-def main(args, model=None, thresholds=None):
+def main(args, model=None, thresholds=None, split_for_threshold_tuning='val'):
     print '=== Predict on test ==='
     images_dir, model_dir, pred_out_dir, probs_path, checkpoint_path = \
         get_pathes_predict(args, split='test')
@@ -54,27 +56,34 @@ def main(args, model=None, thresholds=None):
         predicts = np.load(probs_path)
     else:
         if not model:
-            model = load_model(checkpoint_path)
+            model = load_model(checkpoint_path,
+                               custom_objects={'f2score_samples': f2score_samples})
         predicts = list()
-        num_blocks = 10
+        num_blocks = 20
         block_size = int(np.ceil(len(df_sample_test) / float(num_blocks)))
         for block_start in xrange(0, len(df_sample_test), block_size):
             print 'Block', block_start / block_size
             block_df = df_sample_test.iloc[block_start:block_start + block_size]
-            block_predicts = predict(args.model, model,
-                                     images_dir, block_df.index,
-                                     batch_size=args.batch_size,
-                                     tile_size=args.tile_size)
+            block_predicts = predict_tta(args.model, model,
+                                         images_dir, block_df.index,
+                                         batch_size=args.batch_size,
+                                         crop_size=args.tile_size,
+                                         n_augs=args.n_tta)
             predicts.append(block_predicts)
 
         predicts = np.vstack(predicts)
         np.save(probs_path, predicts)
     print 'Predictions shape:', predicts.shape
-    print predicts[:5]
+    print predicts[:3]
 
     cnt = 0
+    ckpt_name = os.path.splitext(args.checkpoint)[0]
     if thresholds is None:
-        thresholds = np.load(join(pred_out_dir, 'cv_thresholds.npy'))
+        thresholds = np.load(join(pred_out_dir,
+                                  '{}_cv_thresholds_{}_tta{}{}.npy'.format(
+                                      split_for_threshold_tuning,
+                                      ckpt_name, args.n_tta,
+                                      args.pred_suf)))
     assert len(thresholds) == 1 or len(thresholds) == predicts.shape[1], \
         'wrong thresholds shape:{}'.format(thresholds.shape)
     print 'Cur thresholds:', thresholds
@@ -93,7 +102,8 @@ def main(args, model=None, thresholds=None):
     final_df = pd.DataFrame(index=df_sample_test.index, data={'tags': predicted_labels})
     final_df.index.name = 'image_name'
     final_df.head()
-    final_df.to_csv(join(ROOT_DIR, 'predictions/submission_df.csv'))
+    final_df.to_csv(join(ROOT_DIR, 'predictions/submission_{}_{}_tta{}{}.csv'.format(
+        args.model + args.suf, ckpt_name, args.n_tta, args.pred_suf)))
 
 
 if __name__ == '__main__':
