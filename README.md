@@ -1,4 +1,4 @@
-# Kaggle Amazon Satellite images competition
+# Kaggle Amazon satellite images competition
 
 Code for the Kaggle Planet: Understanding the Amazon from Space competition.   
 Our team ***Heidelberg Uni & MIPT*** finished on the **17th**/938 place. 
